@@ -1,52 +1,60 @@
-/**************** OTA HEADERS ****************/
 #include <WiFi.h>
-#include <ESPmDNS.h>
-#include <WiFiUdp.h>
+#include <esp_now.h>
+#include <WebServer.h>
 #include <ArduinoOTA.h>
 
-/************* WiFi Credentials *************/
+/******** WiFi ********/
 const char *ssid = "Acer";
 const char *password = "Sarthak@017";
 
-/************* MOTOR PIN ********************/
-#define MOTOR_PIN 25   // Change if needed
+/******** HTTP ********/
+WebServer server(80);
 
-/**************** SETUP *********************/
-void setup() {
-  Serial.begin(115200);
-  Serial.println("\n[BOOT] ESP32 Belt Motor OTA Test");
+/******** Packet ********/
+typedef struct {
+  uint8_t direction;
+  uint8_t risk;
+} DataPacket;
 
-  pinMode(MOTOR_PIN, OUTPUT);
-  digitalWrite(MOTOR_PIN, LOW);
+volatile bool packetReceived = false;
+DataPacket lastPacket;
 
-  WiFi.begin(ssid, password);
-  Serial.print("[WiFi] Connecting");
-
-  while (WiFi.waitForConnectResult() != WL_CONNECTED) {
-    delay(1000);
-    Serial.print(".");
+/******** ESP-NOW RX CALLBACK (ESP32 CORE 3.x) ********/
+void onReceive(const esp_now_recv_info *info,
+               const uint8_t *data,
+               int len) {
+  if (len == sizeof(DataPacket)) {
+    memcpy(&lastPacket, data, sizeof(DataPacket));
+    packetReceived = true;
   }
-
-  Serial.println("\n[WiFi] Connected");
-  Serial.print("[WiFi] IP: ");
-  Serial.println(WiFi.localIP());
-
-  ArduinoOTA.setHostname("Belt-Motor-Test");
-  ArduinoOTA.begin();
-  Serial.println("[OTA] Ready");
 }
 
-/**************** LOOP **********************/
+/******** HTTP STATUS ********/
+void handleStatus() {
+  String json = "{";
+  json += "\"received\":" + String(packetReceived ? "true" : "false") + ",";
+  json += "\"direction\":" + String(lastPacket.direction) + ",";
+  json += "\"risk\":" + String(lastPacket.risk);
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
+void setup() {
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) delay(300);
+
+  esp_now_init();
+  esp_now_register_recv_cb(onReceive);
+
+  ArduinoOTA.setHostname("Belt-ESP32");
+  ArduinoOTA.begin();
+
+  server.on("/status", handleStatus);
+  server.begin();
+}
+
 void loop() {
   ArduinoOTA.handle();
-
-  // Motor ON
-  digitalWrite(MOTOR_PIN, HIGH);
-  Serial.println("[MOTOR] ON");
-  delay(300);
-
-  // Motor OFF
-  digitalWrite(MOTOR_PIN, LOW);
-  Serial.println("[MOTOR] OFF");
-  delay(700);
+  server.handleClient();
 }
