@@ -20,11 +20,13 @@ NavPacket pkt;
 bool received = false;
 
 /******** MOTOR PINS ********/
+// Index mapping:
+// 0 Front, 1 FR, 2 Right, 3 BR, 4 Back, 5 BL, 6 Left, 7 FL
 int motorPins[8] = {13,12,14,27,26,25,33,32};
 
 /******** MOTOR CONTROL ********/
 void stopAllMotors() {
-  for(int i=0;i<8;i++) digitalWrite(motorPins[i], LOW);
+  for (int i = 0; i < 8; i++) digitalWrite(motorPins[i], LOW);
 }
 
 void vibrateMotor(int idx, int risk) {
@@ -32,9 +34,8 @@ void vibrateMotor(int idx, int risk) {
   if (idx > 7) return;
 
   if (risk == 2) {
-    digitalWrite(motorPins[idx], HIGH);   // continuous
-  } 
-  else {
+    digitalWrite(motorPins[idx], HIGH);   // Continuous
+  } else {
     digitalWrite(motorPins[idx], HIGH);
     delay(150);
     digitalWrite(motorPins[idx], LOW);
@@ -53,7 +54,7 @@ void onReceive(const esp_now_recv_info *info,
 /******** HTTP: STATUS ********/
 void handleBelt() {
   String json = "{";
-  json += "\"dir\":" + String(pkt.direction) + ",";
+  json += "\"direction\":" + String(pkt.direction) + ",";
   json += "\"risk\":" + String(pkt.risk) + ",";
   json += "\"height\":" + String(pkt.height) + ",";
   json += "\"motion\":" + String(pkt.motion);
@@ -64,26 +65,18 @@ void handleBelt() {
 /******** HTTP: MANUAL MOTOR TEST ********/
 void handleTest() {
   if (!server.hasArg("m")) {
-    server.send(400, "text/plain", "Missing motor index (?m=0-7)");
+    server.send(400, "text/plain", "Use /test?m=0-7&r=0-2");
     return;
   }
-
   int m = server.arg("m").toInt();
   int r = server.hasArg("r") ? server.arg("r").toInt() : 1;
-
   vibrateMotor(m, r);
-
-  String msg = "Motor ";
-  msg += m;
-  msg += " activated with risk ";
-  msg += r;
-
-  server.send(200, "text/plain", msg);
+  server.send(200, "text/plain", "Motor test executed");
 }
 
 /******** SETUP ********/
 void setup() {
-  for(int i=0;i<8;i++) {
+  for (int i = 0; i < 8; i++) {
     pinMode(motorPins[i], OUTPUT);
     digitalWrite(motorPins[i], LOW);
   }
@@ -109,7 +102,6 @@ void loop() {
     vibrateMotor(pkt.direction, pkt.risk);
     received = false;
   }
-
   ArduinoOTA.handle();
   server.handleClient();
 }

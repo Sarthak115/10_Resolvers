@@ -3,10 +3,11 @@
 #include <WebServer.h>
 #include <ArduinoOTA.h>
 
+/******** WiFi ********/
 const char *ssid = "Acer";
 const char *password = "Sarthak@017";
 
-// BELT MAC
+/******** BELT MAC ********/
 uint8_t beltMAC[] = {0x80,0xF3,0xDA,0x4A,0xA7,0xDC};
 
 WebServer server(80);
@@ -23,19 +24,21 @@ WebServer server(80);
 #define BACK_TRIG  23
 #define BACK_ECHO  22
 
+/******** PACKET ********/
 typedef struct {
-  uint8_t direction;
-  uint8_t risk;
-  uint8_t height;
-  uint8_t motion;
+  uint8_t direction;  // 0–7, 255 = none
+  uint8_t risk;       // 0=low,1=medium,2=high
+  uint8_t height;     // 0=floor,1=mid,2=high
+  uint8_t motion;     // 0=static,1=approaching
 } NavPacket;
 
 NavPacket pkt;
 
-long prevFront = 999;
-long prevBack  = 999;
+/******** DISTANCE STORAGE ********/
+long d_front = 999, d_left = 999, d_right = 999, d_down = 999, d_back = 999;
+long prevFront = 999, prevBack = 999;
 
-/******** Distance ********/
+/******** DISTANCE FUNCTION ********/
 long getDistance(int trig, int echo) {
   digitalWrite(trig, LOW); delayMicroseconds(2);
   digitalWrite(trig, HIGH); delayMicroseconds(10);
@@ -45,13 +48,13 @@ long getDistance(int trig, int echo) {
   return d * 0.034 / 2;
 }
 
-/******** Core Logic ********/
+/******** CORE LOGIC ********/
 void updateLogic() {
-  long front = getDistance(FRONT_TRIG, FRONT_ECHO);
-  long left  = getDistance(LEFT_TRIG, LEFT_ECHO);
-  long right = getDistance(RIGHT_TRIG, RIGHT_ECHO);
-  long down  = getDistance(DOWN_TRIG, DOWN_ECHO);
-  long back  = getDistance(BACK_TRIG, BACK_ECHO);
+  d_front = getDistance(FRONT_TRIG, FRONT_ECHO);
+  d_left  = getDistance(LEFT_TRIG, LEFT_ECHO);
+  d_right = getDistance(RIGHT_TRIG, RIGHT_ECHO);
+  d_down  = getDistance(DOWN_TRIG, DOWN_ECHO);
+  d_back  = getDistance(BACK_TRIG, BACK_ECHO);
 
   // Defaults
   pkt.direction = 255;
@@ -60,42 +63,42 @@ void updateLogic() {
   pkt.motion = 0;
 
   // Motion detection (front)
-  if (front < prevFront - 10) pkt.motion = 1;
-  prevFront = front;
+  if (d_front < prevFront - 10) pkt.motion = 1;
+  prevFront = d_front;
 
-  // FOLLOWING detection (back)
-  if (back < prevBack - 10) {
+  // Following detection (back)
+  if (d_back < prevBack - 10) {
     pkt.direction = 4;   // BACK
     pkt.risk = 1;
     pkt.motion = 1;
   }
-  prevBack = back;
+  prevBack = d_back;
 
-  // Floor priority
-  if (down > 80) {
-    pkt.direction = 0;
+  // PRIORITY ORDER
+  if (d_down > 80) {                // Floor hazard
+    pkt.direction = 0;              // Front
     pkt.risk = 2;
     pkt.height = 0;
   }
-  else if (front < 60) {
+  else if (d_front < 60) {           // Front obstacle
     pkt.direction = 0;
-    pkt.risk = (front < 30) ? 2 : 1;
+    pkt.risk = (d_front < 30) ? 2 : 1;
     pkt.height = 1;
   }
-  else if (left < 50) {
+  else if (d_left < 50) {            // Left
     pkt.direction = 6;
     pkt.risk = 1;
   }
-  else if (right < 50) {
+  else if (d_right < 50) {           // Right
     pkt.direction = 2;
     pkt.risk = 1;
   }
 }
 
-/******** HTTP DEBUG ********/
+/******** HTTP: PACKET ONLY ********/
 void handleCap() {
   String json = "{";
-  json += "\"dir\":" + String(pkt.direction) + ",";
+  json += "\"direction\":" + String(pkt.direction) + ",";
   json += "\"risk\":" + String(pkt.risk) + ",";
   json += "\"height\":" + String(pkt.height) + ",";
   json += "\"motion\":" + String(pkt.motion);
@@ -103,6 +106,27 @@ void handleCap() {
   server.send(200, "application/json", json);
 }
 
+/******** HTTP: FULL DEBUG ********/
+void handleDebug() {
+  String json = "{";
+  json += "\"ultrasonic\":{";
+  json += "\"front\":" + String(d_front) + ",";
+  json += "\"left\":" + String(d_left) + ",";
+  json += "\"right\":" + String(d_right) + ",";
+  json += "\"back\":" + String(d_back) + ",";
+  json += "\"down\":" + String(d_down);
+  json += "},";
+  json += "\"packet\":{";
+  json += "\"direction\":" + String(pkt.direction) + ",";
+  json += "\"risk\":" + String(pkt.risk) + ",";
+  json += "\"height\":" + String(pkt.height) + ",";
+  json += "\"motion\":" + String(pkt.motion);
+  json += "}";
+  json += "}";
+  server.send(200, "application/json", json);
+}
+
+/******** SETUP ********/
 void setup() {
   pinMode(FRONT_TRIG, OUTPUT);
   pinMode(LEFT_TRIG, OUTPUT);
@@ -125,11 +149,15 @@ void setup() {
   memcpy(peer.peer_addr, beltMAC, 6);
   esp_now_add_peer(&peer);
 
+  ArduinoOTA.setHostname("Cap-ESP32");
   ArduinoOTA.begin();
+
   server.on("/cap", handleCap);
+  server.on("/debug", handleDebug);
   server.begin();
 }
 
+/******** LOOP ********/
 void loop() {
   updateLogic();
   esp_now_send(beltMAC, (uint8_t*)&pkt, sizeof(pkt));
